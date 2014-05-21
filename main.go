@@ -1,61 +1,3 @@
-// package main
-// 
-// import (
-// 	"bufio"
-// 	"bytes"
-// 	"fmt"
-// 	"crypto/tls"
-// 	"net"
-// 	"net/http"
-// 	"net/http/httputil"
-// 	"log"
-// )
-// 
-// func fun(line []byte) {
-// 	log.Println(line)
-// }
-// 
-// func main () {
-// 	tcpConn, err := net.Dial("tcp", "localhost:5556")
-// 	if err != nil {
-// 		log.Fatal("Error opening tcp connection")
-// 	}
-// 	cf := &tls.Config{InsecureSkipVerify: true}
-// 	ssl := tls.Client(tcpConn, cf)
-// 	reader := bufio.NewReader(ssl)
-// 	clientConn := httputil.NewClientConn(ssl, reader)
-// 	
-// 	req, err := http.NewRequest("GET", "stream", nil)
-// 	if err != nil {
-// 		log.Fatal("Error GETting path")
-// 	}
-// 
-// 	token := "b00t1csse"
-// 
-// 	req.Header.Add("Authorization", fmt.Sprintf("Bearer %s", token))
-// 	req.Header.Set("Connection", "Keep-Alive")
-// 
-// 	_, err = clientConn.Do(req)
-// 	if err != nil {
-// 		log.Fatal("Error executing request ", err)
-// 	}
-// 
-// 	// reader := bufio.NewReader(resp.Body)
-// 	for {
-// 	  // if c.stale {
-// // 	    c.clientConn.Close()
-// // 	    break
-// // 	  }
-// 
-// 	  line, err := reader.ReadBytes('\r')
-// 		if err != nil {
-// 			log.Fatal("Could not read line", err)
-// 		}
-// 	  line = bytes.TrimSpace(line)
-// 
-// 	  fun(line)
-// 	}
-// }
 package main
 
 import (
@@ -64,35 +6,87 @@ import (
 	"net/http"
 	"bufio"
 	"bytes"
+	"fmt"
 )
 
 func handler(line []byte) {
 	log.Println(string(line))
 }
- 
-func main() {
 
-	url, _ := url.Parse("https://tracker.bootic.net/stream?raw=1")
+type eventsChan chan []byte
 
-	var resp *http.Response
-	client := &http.Client{}
+type Client struct {
+	conn *http.Client
+	resp *http.Response
+	token string
+	observers []eventsChan
+	url *url.URL
+}
+
+func NewClient (urlStr, token string) (client *Client, err error) {
+
+	url, err := url.Parse(urlStr)
+	if err != nil {
+		return
+	}
+
+	client = &Client{
+		url: url,
+		token: token,
+		observers: []eventsChan{},
+	}
+
+	err = client.connect()
+	if err != nil {
+		return
+	}
+
+	go client.listen()
+
+	return
+}
+
+func (c *Client) Subscribe(observer eventsChan) {
+	c.observers = append(c.observers, observer)
+}
+
+func (c *Client) connect() (err error) {
+	httpConn := &http.Client{}
 
 	var req http.Request
-	req.URL = url
+	req.URL = c.url
 	req.Method = "GET"
 	req.Header = http.Header{}
-	req.Header.Set("Authorization", "Bearer xxx")
+	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", c.token))
 
-	resp, err := client.Do(&req)
-
+	resp, err := httpConn.Do(&req)
 	if err != nil {
-		log.Fatal("Could not execute request", err)
+		return
 	}
+
+	c.conn = httpConn
+
 	if resp.StatusCode != 200 {
 		log.Fatal("HTTP error", resp.StatusCode)
 	}
+	c.resp = resp
 
-	reader := bufio.NewReader(resp.Body)
+	return
+}
+
+func (c *Client) listen() {
+	reader := bufio.NewReader(c.resp.Body)
+
+	buffer := make(eventsChan, 20)
+
+	go func() {
+		for {
+			evt := <-buffer
+			for i := range c.observers {
+				c.observers[i] <- evt
+			}
+		}
+	}()
 
 	for {
 		line, err := reader.ReadBytes('\n')
@@ -104,6 +98,18 @@ func main() {
 		if len(line) == 0 {
 			continue
 		}
-		handler(line)
+		buffer <- line
 	}
+}
+
+func main() {
+	client, _ := NewClient("https://tracker.bootic.net/stream?raw=1", "b00t1csse")
+
+	events := make(eventsChan)
+	client.Subscribe(events)
+	
+	for {
+		log.Println(string(<-events))
+	}
+	
 }
