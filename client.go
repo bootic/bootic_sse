@@ -1,29 +1,28 @@
-package main
+package bootic_sse
 
 import (
-	"log"
-	"net/url"
-	"net/http"
 	"bufio"
 	"bytes"
 	"fmt"
+	data "github.com/bootic/bootic_go_data"
+	"log"
+	"net/http"
+	"net/url"
 )
 
 func handler(line []byte) {
 	log.Println(string(line))
 }
 
-type eventsChan chan []byte
-
 type Client struct {
-	conn *http.Client
-	resp *http.Response
-	token string
-	observers []eventsChan
-	url *url.URL
+	conn      *http.Client
+	resp      *http.Response
+	token     string
+	observers []data.EventsChannel
+	url       *url.URL
 }
 
-func NewClient (urlStr, token string) (client *Client, err error) {
+func NewClient(urlStr, token string) (client *Client, err error) {
 
 	url, err := url.Parse(urlStr)
 	if err != nil {
@@ -31,9 +30,9 @@ func NewClient (urlStr, token string) (client *Client, err error) {
 	}
 
 	client = &Client{
-		url: url,
-		token: token,
-		observers: []eventsChan{},
+		url:       url,
+		token:     token,
+		observers: []data.EventsChannel{},
 	}
 
 	err = client.connect()
@@ -46,8 +45,13 @@ func NewClient (urlStr, token string) (client *Client, err error) {
 	return
 }
 
-func (c *Client) Subscribe(observer eventsChan) {
+func (c *Client) Subscribe(observer data.EventsChannel) {
 	c.observers = append(c.observers, observer)
+}
+
+func (c *Client) SubscribeToType(observer data.EventsChannel, topic string) {
+	log.Println("SSE client does not filter by topic yet", topic)
+	c.Subscribe(observer)
 }
 
 func (c *Client) connect() (err error) {
@@ -77,7 +81,7 @@ func (c *Client) connect() (err error) {
 func (c *Client) listen() {
 	reader := bufio.NewReader(c.resp.Body)
 
-	buffer := make(eventsChan, 20)
+	buffer := make(data.EventsChannel, 20)
 
 	go func() {
 		for {
@@ -98,18 +102,11 @@ func (c *Client) listen() {
 		if len(line) == 0 {
 			continue
 		}
-		buffer <- line
+		event, err := data.DecodeJSON(line)
+		if err != nil {
+			log.Println("Could not decode", string(line))
+			continue
+		}
+		buffer <- event
 	}
-}
-
-func main() {
-	client, _ := NewClient("https://tracker.bootic.net/stream?raw=1", "b00t1csse")
-
-	events := make(eventsChan)
-	client.Subscribe(events)
-	
-	for {
-		log.Println(string(<-events))
-	}
-	
 }
